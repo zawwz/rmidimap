@@ -1,0 +1,21 @@
+[package]
+name = "rmidimap"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+#midir = "0.9"
+#midir = { path = "midir" }
+regex = "1.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+num-traits = "0.2"
+num = "0.4"
+lazy_static = "1.4"
+clap = { version = "4.1", features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa = "0.7.0"
+libc = "0.2.21"

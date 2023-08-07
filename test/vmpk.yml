@@ -1,0 +1,20 @@
+devices:
+  - name: 'VMPK Output:out'
+    multiconnect: false
+    connect: 
+      - args: [ "sh", "-c", "echo Hello world!" ]
+    disconnect: 
+      - args: [ "sh", "-c", "echo Bye!" ]
+    events:
+      - type: Controller
+        run:
+          - args: [ "sh", "-c", "echo [$channel] Controller $id $value" ]
+      - type: NoteOff
+        run:
+          - args: [ "sh", "-c", "echo [$channel] NoteOff $id" ]
+      - type: NoteOn
+        run:
+          - args: [ "sh", "-c", "echo [$channel] NoteOn $id $value" ]
+      - type: PitchBend
+        run:
+          - args: [ "sh", "-c", "echo [$channel] PitchBend $value" ]
