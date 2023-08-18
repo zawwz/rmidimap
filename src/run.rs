@@ -74,7 +74,7 @@ fn try_connect_process<'a>(
             let mm = m.as_ref().map(Arc::clone);
             let t = s.spawn( move || {
                 dev.run_connect().unwrap();
-                c.run(eventmap, (srs,nsts)).unwrap();
+                c.run(dev, eventmap, (srs,nsts)).unwrap();
                 if let Some(m) = mm {
                     let mut m = m.lock().unwrap();
                     m.0 -= 1;

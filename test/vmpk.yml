@@ -1,6 +1,8 @@
 devices:
   - name: 'VMPK'
     max_connections: 1
+    queue_length: 3
+    interval: 100ms
     connect: 
       - args: [ "sh", "-c", "echo Hello world!" ]
     disconnect: 

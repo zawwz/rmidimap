@@ -87,6 +87,16 @@ pub struct Event<'a> {
     pub timestamp: Option<SystemTime>,
 }
 
+#[derive(Debug,Clone,Default)]
+pub struct EventBuf {
+    pub r#type: EventType,
+    pub channel: u8,
+    pub id: u8,
+    pub value: u16,
+    pub raw: Vec<u8>,
+    pub timestamp: Option<SystemTime>,
+}
+
 pub struct EventEnv {
     pub channel: String,
     pub id: String,
@@ -104,6 +114,32 @@ struct EventEnvRef<'a> {
     pub rawvalue: &'a str,
     pub timestamp: &'a str,
     pub value: &'a str,
+}
+
+impl EventBuf {
+    pub fn as_event(&self) -> Event {
+        Event {
+            r#type: self.r#type,
+            channel: self.channel,
+            id: self.id,
+            value: self.value,
+            raw: &self.raw[..],
+            timestamp: self.timestamp,
+        }
+    }
+}
+
+impl Into<EventBuf> for Event<'_> {
+    fn into(self) -> EventBuf {
+        EventBuf {
+            r#type: self.r#type,
+            channel: self.channel,
+            id: self.id,
+            value: self.value,
+            raw: Vec::from(self.raw),
+            timestamp: self.timestamp,
+        }
+    }
 }
 
 impl From<u8> for EventType {

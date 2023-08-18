@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::event::Event;
 use crate::util;
 use crate::Error;
@@ -19,6 +21,8 @@ pub struct DeviceConfig {
     pub connect: Option<Vec<RunConfig>>,
     pub disconnect: Option<Vec<RunConfig>>,
     pub events: Option<Vec<EventConfig>>,
+    pub queue_length: usize,
+    pub interval: Duration,
 }
 
 impl DeviceConfig {
@@ -66,6 +70,8 @@ impl TryFrom<DeviceConfigSerializer> for DeviceConfig {
             connect:    util::map_opt_tryfrom(v.connect)?,
             disconnect: util::map_opt_tryfrom(v.disconnect)?,
             events:     util::map_opt_tryfrom(v.events)?,
+            queue_length: v.queue_length.unwrap_or(256),
+            interval: v.interval.map(|x| x.unwrap()).unwrap_or_else(|| Duration::new(0, 0)),
         })
     }
 }

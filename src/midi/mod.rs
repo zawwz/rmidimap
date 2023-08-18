@@ -1,5 +1,7 @@
 pub mod alsa;
 
+use queues::{CircularBuffer, IsQueue};
+
 use crate::config::device::Identifier;
 use crate::midi::alsa::MidiInputAlsa;
 use crate::Error;
@@ -8,10 +10,11 @@ extern crate libc;
 
 use crate::config::DeviceConfig;
 use crate::eventmap::EventMap;
-use crate::event::Event;
+use crate::event::{Event, EventBuf};
 
-use std::time::SystemTime;
-use std::sync::mpsc;
+use std::thread;
+use std::time::{SystemTime, Instant};
+use std::sync::{mpsc, Mutex, Arc};
 
 #[derive(Eq,PartialEq,Debug,Clone)]
 pub struct MidiPort<T>{
@@ -161,9 +164,9 @@ impl MidiHandler {
         r
     }
 
-    pub fn run(&mut self, eventmap: &EventMap, (rs,ts): (mpsc::Receiver<bool>, mpsc::Sender<bool>)) -> Result<(), Error>  {
+    pub fn run(&mut self, conf: &DeviceConfig, eventmap: &EventMap, (rs,ts): (mpsc::Receiver<bool>, mpsc::Sender<bool>)) -> Result<(), Error>  {
         handler_fcall!{
-            self, handle_inputport ,(eventmap,(rs,ts)),
+            self, handle_inputport, (conf, eventmap,(rs,ts)),
             ALSA
         }
     }
@@ -189,19 +192,57 @@ where T: MidiInput<A>
     input.ports_handle()
 }
 
-fn handle_inputport<T>(input: &mut T, (eventmap, (rs, ts)): (&EventMap, (mpsc::Receiver<bool>, mpsc::Sender<bool>))) -> Result<(), Error>
-where T: MidiInputHandler
+fn handle_inputport<T>(input: &mut T, (conf, eventmap, (rs, ts)): (&DeviceConfig, &EventMap, (mpsc::Receiver<bool>, mpsc::Sender<bool>))) -> Result<(), Error>
+where T: MidiInputHandler + Send
 {
-    input.handle_input(|t,m,_| {
-        let mut event = Event::from(m);
-        event.timestamp = t;
-        match eventmap.run_event(&event) {
-            Ok(_) => (),
-            Err(e) => {
-                eprintln!("ERROR: error on run: {}", e)
-            },
-        }
-    }, (rs,ts), ())?;
+    thread::scope(|s| -> Result<(), Error> {
+
+        // parking signal for runner, true = stop
+        let (pts,prs) = mpsc::channel::<bool>();
+
+        let evq = Arc::new(Mutex::new(CircularBuffer::<EventBuf>::new(conf.queue_length)));
+
+        // background execution loop
+        let rq = evq.clone();
+        let exec_thread = s.spawn(move || -> Result<(),Error> {
+            loop {
+                if prs.recv()? {
+                    break;
+                }
+                loop {
+                    // nest the lock into a scope to release it before run
+                    let (ev,start): (EventBuf,Instant) = {
+                        let mut evq = rq.lock().unwrap();
+                        if evq.size() > 0 {
+                            (evq.remove().unwrap(), Instant::now())
+                        } else {
+                            break;
+                        }
+                    };
+                    eventmap.run_event(&ev.as_event()).unwrap_or_else(|e| eprintln!("ERROR: error on run: {}", e) );
+                    let elapsed_time = start.elapsed();
+                    if elapsed_time < conf.interval {
+                        thread::sleep(conf.interval - elapsed_time);
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        input.handle_input(|t,m,(evq,pts)| {
+            let mut event: EventBuf = Event::from(m).into();
+            event.timestamp = t;
+            let mut evq = evq.lock().unwrap();
+            evq.add(event).unwrap();
+            pts.send(false).expect("unexpected write error");
+        }, (rs,ts), (evq,pts.clone()))?;
+
+        pts.send(true).expect("unexpected write error");
+        let _ = exec_thread.join();
+
+        Ok(())
+
+    })?;
     Ok(())
 }
 
