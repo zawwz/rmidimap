@@ -1,48 +1,71 @@
-use crate::config::{RunConfig,EventConfig};
 use crate::event::Event;
+use crate::util;
+use crate::Error;
+use super::{RunConfig,EventConfig};
+use super::serializer::DeviceConfigSerializer;
 
-use serde::Deserialize;
+#[derive(Debug,Clone)]
+pub enum Identifier {
+    All,
+    Name(String),
+    Regex(regex::Regex),
+    Addr(String),
+}
 
-#[derive(Deserialize,Debug,Clone)]
+#[derive(Debug,Clone)]
 pub struct DeviceConfig {
-    pub name: Option<String>,
-    pub regex: Option<String>,
+    pub identifier: Identifier,
+    pub max_connections: Option<u32>,
     pub connect: Option<Vec<RunConfig>>,
     pub disconnect: Option<Vec<RunConfig>>,
     pub events: Option<Vec<EventConfig>>,
-    pub multiconnect: Option<bool>,
 }
 
-//impl DeviceConfig {
-//    fn connect(&self, port: &MidiInputPort) {
-//        let mut midi_in = MidiInput::new("midi inputs")?;
-//        midi_in.ignore(Ignore::None);
-//        let _conn_in = midi_in.connect(in_port, "midir-read-input", move |_, message, emap| {
-//            let event = event::Event::from(message);
-//            emap.run_event(&event).unwrap();
-//        }, eventmap)?;
-//    }
-//}
-
 impl DeviceConfig {
-    fn run_internal<'a, T>(&self, v: Option<T>) -> Result<Vec<std::process::ExitStatus>, std::io::Error>
+    fn run_internal<'a, T>(&self, v: Option<T>) -> Result<Vec<std::process::ExitStatus>, Error>
     where
         T: IntoIterator<Item = &'a RunConfig>
     {
         let mut r = Vec::new();
         if let Some(ev) = v {
             for e in ev {
-                r.push( e.run(Event::new().gen_env())? ) ;
+                r.push( e.run(Event::new().make_env(None, false)?.to_map(e.envconf.as_ref()))? ) ;
             }
         }
         Ok(r)
     }
 
-    pub fn run_connect(&self) -> Result<Vec<std::process::ExitStatus>, std::io::Error> {
+    pub fn run_connect(&self) -> Result<Vec<std::process::ExitStatus>, Error> {
         self.run_internal(self.connect.as_ref())
     }
 
-    pub fn run_disconnect(&self) -> Result<Vec<std::process::ExitStatus>, std::io::Error>  {
+    pub fn run_disconnect(&self) -> Result<Vec<std::process::ExitStatus>, Error>  {
         self.run_internal(self.disconnect.as_ref())
+    }
+}
+
+impl TryFrom<DeviceConfigSerializer> for DeviceConfig {
+    type Error = crate::Error;
+    fn try_from(v: DeviceConfigSerializer) -> Result<Self, Self::Error> {
+        Ok(DeviceConfig {
+            identifier: {
+                if v.name.is_some() {
+                    Identifier::Name(v.name.unwrap())
+                }
+                else if v.regex.is_some() {
+                    Identifier::Regex(regex::Regex::new(&v.regex.unwrap())?)
+                }
+                else if v.addr.is_some() {
+                    Identifier::Addr(v.addr.unwrap())
+                }
+                else {
+                    Identifier::All
+                }
+            },
+            max_connections: v.max_connections,
+            connect:    util::map_opt_tryfrom(v.connect)?,
+            disconnect: util::map_opt_tryfrom(v.disconnect)?,
+            events:     util::map_opt_tryfrom(v.events)?,
+        })
     }
 }

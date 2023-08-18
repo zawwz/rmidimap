@@ -1,20 +1,56 @@
 devices:
-  - name: 'VMPK Output:out'
-    multiconnect: false
+  - name: 'VMPK'
+    max_connections: 1
     connect: 
       - args: [ "sh", "-c", "echo Hello world!" ]
     disconnect: 
       - args: [ "sh", "-c", "echo Bye!" ]
     events:
+      - type: ProgramChange
+        run:
+          - cmd: "echo [$channel] ProgramChange $id"
       - type: Controller
+        remap: 0:100
         run:
-          - args: [ "sh", "-c", "echo [$channel] Controller $id $value" ]
+          - cmd: "echo [$channel] Controller $id $value $rawvalue"
       - type: NoteOff
+        id: 25-30
         run:
-          - args: [ "sh", "-c", "echo [$channel] NoteOff $id" ]
+          - cmd: "echo [$channel] NoteOff $id"
       - type: NoteOn
+        channel: 0
         run:
-          - args: [ "sh", "-c", "echo [$channel] NoteOn $id $value" ]
+          - cmd: "echo [$channel] NoteOn $id $value $raw"
       - type: PitchBend
+        remap: 0-100
+        float: true
+        value: 0-65535
         run:
-          - args: [ "sh", "-c", "echo [$channel] PitchBend $value" ]
+          - cmd: "echo [$channel] PitchBend $value $raw $toto"
+            envconf:
+              timestamp: toto
+  - name: 'VMPK'
+    max_connections: 1
+    connect: 
+      - args: [ "sh", "-c", "echo Hello world! 2" ]
+    disconnect: 
+      - args: [ "sh", "-c", "echo Bye! 2" ]
+    events:
+      - type: NoteOff
+        id: 25-30
+        run:
+          - args: [ "sh", "-c", "echo 2 [$channel] NoteOff $id" ]
+      - type: NoteOn
+        channel: 0
+        #channel: -1
+        remap: -1
+        run:
+          - args: [ "sh", "-c", "echo 2 [$channel] NoteOn $id $value" ]
+      - type: PitchBend
+        remap: 0-100
+        float: true
+        value: 0-65535
+        run:
+          - args: [ "sh", "-c", "echo [$channel] PitchBend $value $raw $toto" ]
+            envconf:
+              timestamp: toto

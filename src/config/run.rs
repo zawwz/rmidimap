@@ -1,29 +1,42 @@
 use std::collections::HashMap;
 use std::process::Command;
 
-use serde::{Serialize,Deserialize};
+use super::serializer::RunConfigSerializer;
+use super::EventEnvMap;
 
-#[derive(Serialize,Deserialize,Debug,Clone)]
+#[derive(Debug,Clone)]
 pub struct RunConfig {
-    pub args: Option<Vec<String>>,
-    pub shell: Option<String>,
-    pub envconf: Option<HashMap<String, String>>,
+    pub args: Vec<String>,
+    pub envconf: Option<EventEnvMap>,
 }
 
 impl RunConfig {
     pub fn run(&self, env: HashMap<&str, String>) -> Result<std::process::ExitStatus, std::io::Error> {
-        // TODO: proper error handling
-        if self.args.is_some() {
-            let args = self.args.as_ref().unwrap();
-            Command::new(&args[0]).args(&args[1..]).envs(env).status()
+        let mut c = Command::new(&self.args[0]);
+        if self.args.len() > 1 {
+            c.args(&self.args[1..]);
         }
-        else if self.shell.is_some() {
-            let args = crate::run::cross_shell(self.shell.as_ref().unwrap());
-            Command::new(&args[0]).args(&args[1..]).envs(env).status()
-        }
-        else {
-            panic!("unexpected execution failure");
-        }
+        c.envs(env).status()
     }
 }
 
+impl TryFrom<RunConfigSerializer> for RunConfig {
+    type Error = crate::Error;
+    fn try_from(v: RunConfigSerializer) -> Result<Self, Self::Error> {
+        let args = if v.args.is_some() {
+            v.args.unwrap()
+        }
+        else if v.cmd.is_some() {
+            crate::run::cross_shell(v.cmd.as_ref().unwrap())
+        }
+        else {
+            return Err(crate::Error::from(crate::error::ConfigError::RunMissingArgs));
+        };
+        Ok(
+            RunConfig {
+                args,
+                envconf: v.envconf,
+            }
+        )
+    }
+}

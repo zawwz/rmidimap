@@ -2,27 +2,39 @@
 use std::collections::BTreeSet;
 
 use std::str::FromStr;
+use std::ops;
 
 use num::{Num,NumCast};
 
+// Trait aliases are unstable
+//trait smartsetnum = T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign;
+
 pub fn parse_int_set<T>(s: &str) -> Result<BTreeSet<T>, <T as std::str::FromStr>::Err>
-where 
-    T: Num+Ord+Copy + std::str::FromStr + std::ops::AddAssign,
+where
+    T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign,
 {
 
     let mut r: BTreeSet<T> = BTreeSet::new();
     let parts: Vec<&str> = s.split(',').collect();
     for p in parts {
         if p.len() > 0 {
-            if let Some(sep) = p.find('-') {
+            let mut osep = s.find(':');
+            if osep.is_none() {
+                osep = s.find('-');
+            }
+            if let Some(sep) = osep {
                 let (p1,p2) = (&s[..sep], &s[sep+1..] );
                 let (low,high): (T,T) = ( p1.parse()?, p2.parse()? );
                 let (mut low,high) = match low <= high {
                     true => (low,high),
                     false => (high,low),
                 };
-                while low <= high {
+                r.insert(low);
+                loop {
                     r.insert(low);
+                    if low >= high {
+                        break;
+                    }
                     low += T::one();
                 }
             }
@@ -36,15 +48,15 @@ where
 
 #[derive(Debug,Clone)]
 pub struct SmartSet<T>
-where 
-    T: Num+Ord+Copy + std::str::FromStr + std::ops::AddAssign,
+where
+    T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign,
 {
     pub set: BTreeSet<T>
 }
 
-impl<T> SmartSet<T> 
+impl<T> SmartSet<T>
 where
-    T: Num+Ord+Copy + std::str::FromStr + std::ops::AddAssign,
+    T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign,
 {
     pub fn new() -> Self {
         Self {
@@ -57,21 +69,10 @@ where
     }
 }
 
-// impl<T> From<T> for SmartSet<T> 
-// where
-//     T: Num+Ord+Copy + std::str::FromStr + std::ops::AddAssign,
-// {
-//     fn from(i: T) -> Self {
-//         let mut r = SmartSet::new();
-//         r.set.insert(i);
-//         r
-//     }
-// }
-
-impl<T,U> From<U> for SmartSet<T> 
+impl<T,U> From<U> for SmartSet<T>
 where
-    T: Num+Ord+Copy+NumCast + std::str::FromStr + std::ops::AddAssign,
-    U: Num+Ord+Copy+num::ToPrimitive + std::str::FromStr + std::ops::AddAssign,
+    T: Num+Ord+Copy+NumCast + std::str::FromStr + ops::AddAssign,
+    U: Num+Ord+Copy+num::ToPrimitive + std::str::FromStr + ops::AddAssign,
 {
     fn from(i: U) -> Self {
         let mut r = SmartSet::<T>::new();
@@ -80,10 +81,11 @@ where
     }
 }
 
-// impl<T,U> From<&[U]> for SmartSet<T> 
+// TODO: figure out how to do impl priority/exclusion
+// impl<T,U> From<&[U]> for SmartSet<T>
 // where
-//     T: Num+Ord+Copy+NumCast + std::str::FromStr + std::ops::AddAssign,
-//     U: Num+Ord+Copy+num::ToPrimitive + std::str::FromStr + std::ops::AddAssign,
+//     T: Num+Ord+Copy+NumCast + std::str::FromStr + ops::AddAssign,
+//     U: Num+Ord+Copy+num::ToPrimitive + std::str::FromStr + ops::AddAssign,
 // {
 //     fn from(i: &[U]) -> Self {
 //         let mut r = SmartSet::<T>::new();
@@ -94,9 +96,9 @@ where
 //     }
 // }
 
-impl<T> FromStr for SmartSet<T> 
+impl<T> FromStr for SmartSet<T>
 where
-    T: Num+Ord+Copy + std::str::FromStr + std::ops::AddAssign,
+    T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign,
 {
     type Err = <T as FromStr>::Err;
 
@@ -109,7 +111,7 @@ where
 
 impl<T> IntoIterator for SmartSet<T>
 where
-    T: Num+Ord+Copy + std::str::FromStr + std::ops::AddAssign,
+    T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign,
 {
     type Item = T;
     type IntoIter = std::collections::btree_set::IntoIter<Self::Item>;
@@ -121,7 +123,7 @@ where
 
 impl<'a, T> IntoIterator for &'a SmartSet<T>
 where
-    T: Num+Ord+Copy + std::str::FromStr + std::ops::AddAssign,
+    T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign,
 {
     type Item = &'a T;
     type IntoIter = std::collections::btree_set::Iter<'a, T>;
@@ -137,7 +139,7 @@ use serde::de::{self,Deserialize, Deserializer, Visitor};
 
 struct SmartSetVisitor<T>
 where
-    T: Num+Ord+Copy + std::str::FromStr + std::ops::AddAssign,
+    T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign,
 {
     marker: PhantomData<fn() -> SmartSet<T>>
 }
@@ -145,7 +147,7 @@ where
 
 impl<T> SmartSetVisitor<T>
 where
-    T: Num+Ord+Copy + std::str::FromStr + std::ops::AddAssign,
+    T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign,
 {
     fn new() -> Self {
         Self {
@@ -163,13 +165,13 @@ macro_rules! visit_from {
     {
         Ok(SmartSet::from(value))
     }
-    )* 
+    )*
     };
 }
 
 impl<'de, T> Visitor<'de> for SmartSetVisitor<T>
 where
-    T: Num+Ord+Copy+NumCast + Deserialize<'de> + std::str::FromStr + std::ops::AddAssign + std::fmt::Debug,
+    T: Num+Ord+Copy+NumCast + Deserialize<'de> + std::str::FromStr + ops::AddAssign + std::fmt::Debug,
     <T as FromStr>::Err: std::fmt::Display,
 {
     type Value = SmartSet<T>;
@@ -222,7 +224,7 @@ where
 // This is the trait that informs Serde how to deserialize MyMap.
 impl<'de, T> Deserialize<'de> for SmartSet<T>
 where
-    T: Num+Ord+Copy+NumCast + Deserialize<'de> + std::str::FromStr + std::ops::AddAssign + std::fmt::Debug,
+    T: Num+Ord+Copy+NumCast + Deserialize<'de> + std::str::FromStr + ops::AddAssign + std::fmt::Debug,
     <T as FromStr>::Err: std::fmt::Display,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
