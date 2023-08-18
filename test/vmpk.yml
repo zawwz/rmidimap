@@ -42,7 +42,6 @@ devices:
           - args: [ "sh", "-c", "echo 2 [$channel] NoteOff $id" ]
       - type: NoteOn
         channel: 0
-        #channel: -1
         remap: -1
         run:
           - args: [ "sh", "-c", "echo 2 [$channel] NoteOn $id $value" ]

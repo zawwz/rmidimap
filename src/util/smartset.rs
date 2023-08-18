@@ -6,6 +6,8 @@ use std::ops;
 
 use num::{Num,NumCast};
 
+use thiserror::Error;
+
 // Trait aliases are unstable
 //trait smartsetnum = T: Num+Ord+Copy + std::str::FromStr + ops::AddAssign;
 
@@ -64,20 +66,61 @@ where
         }
     }
 
+    pub fn insert(&mut self, v: T) -> bool {
+        self.set.insert(v)
+    }
+
     pub fn len(&self) -> usize {
         self.set.len()
     }
 }
 
-impl<T,U> From<U> for SmartSet<T>
+impl<T> From<T> for SmartSet<T>
 where
     T: Num+Ord+Copy+NumCast + std::str::FromStr + ops::AddAssign,
-    U: Num+Ord+Copy+num::ToPrimitive + std::str::FromStr + ops::AddAssign,
 {
-    fn from(i: U) -> Self {
-        let mut r = SmartSet::<T>::new();
-        r.set.insert(num::NumCast::from(i).unwrap());
-        r
+    fn from(i: T) -> Self {
+        SmartSet {
+            set: BTreeSet::from([i]),
+        }
+    }
+}
+
+#[derive(Error,Debug)]
+pub enum Error<T>
+where
+    T: std::fmt::Display,
+{
+    #[error("invalid type: `{0}`, expected {1}")]
+    Cast(T,String),
+    #[error("unknown error")]
+    Unknown,
+}
+
+trait InternalTryFrom<T>
+where
+    Self: Sized
+{
+    type Error;
+    fn i_try_from(other: T) -> Result<Self, Self::Error>;
+}
+
+impl<T, U> InternalTryFrom<U> for SmartSet<T>
+where
+    T: Num+Ord+Copy+NumCast + std::str::FromStr + ops::AddAssign,
+    U: Num+Ord+Copy+num::ToPrimitive + std::str::FromStr + ops::AddAssign + std::fmt::Display,
+{
+    type Error = Error<U>;
+    fn i_try_from(i: U) -> Result<Self, Self::Error> {
+        // let mut r = SmartSet::<T>::new();
+        match num::NumCast::from(i) {
+            Some(v) => {
+                Ok(SmartSet {
+                    set: BTreeSet::from([v]),
+                })
+            }
+            _ => Err(Error::Cast(i, std::any::type_name::<T>().to_string()))
+        }
     }
 }
 
@@ -163,7 +206,7 @@ macro_rules! visit_from {
     where
         E: de::Error,
     {
-        Ok(SmartSet::from(value))
+        SmartSet::i_try_from(value).map_err(serde::de::Error::custom)
     }
     )*
     };
