@@ -17,6 +17,7 @@ thiserror = "1.0"
 enum-display-derive = "0.1"
 queues = "1.1.0"
 duration-str = { version = "0.5.1", features = ["serde"] }
+signal-hook = "0.3.17"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa = "0.7.0"

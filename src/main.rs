@@ -21,9 +21,11 @@ use cli::Cli;
 
 fn main() {
     let c = Cli::parse();
-    match run_file(&c.map_file) {
-        Ok(_) => (),
-        Err(err) => println!("Error: {}", err)
+    loop {
+        match run_file(&c.map_file) {
+            Ok(_) => (),
+            Err(err) => println!("Error: {}", err)
+        }
     }
 }
 

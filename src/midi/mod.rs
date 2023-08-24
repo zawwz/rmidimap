@@ -3,7 +3,7 @@ pub mod alsa;
 use queues::{CircularBuffer, IsQueue};
 
 use crate::config::device::Identifier;
-use crate::midi::alsa::MidiInputAlsa;
+use super::midi::alsa::MidiInputAlsa;
 use crate::Error;
 
 extern crate libc;
@@ -53,6 +53,7 @@ impl From<MidiPortHandler> for MidiAddrHandler {
     fn from(a: MidiPortHandler) -> Self {
         match a {
             MidiPortHandler::ALSA(p) => MidiAddrHandler::ALSA(p.addr),
+            _ => todo!(),
         }
     }
 }
@@ -81,15 +82,15 @@ pub trait MidiInput<T> {
 
     fn connect(&mut self, port_addr: &T, port_name: &str) -> Result<(), Error>;
 
-    fn device_events(&mut self, ts: mpsc::Sender<MidiPortHandler>) -> Result<(), Error>;
+    fn device_events(&mut self, ts: mpsc::Sender<Option<MidiPortHandler>>, ss: (mpsc::Sender<bool>, mpsc::Receiver<bool>)) -> Result<(), Error>;
 }
 
 pub trait MidiInputHandler {
     fn signal_stop_input(&self) -> Result<(), Error>;
 
-    fn handle_input<F, D>(&mut self, callback: F, rts: (mpsc::Receiver<bool>, mpsc::Sender<bool>), userdata: D) -> Result<(), Error>
+    fn handle_input<F, D>(&mut self, callback: F, rts: (mpsc::Sender<bool>, mpsc::Receiver<bool>), userdata: D) -> Result<(), Error>
     where
-        F: Fn(Option<SystemTime>, &[u8], &mut D) + Send,
+        F: Fn(&Self, &[u8], Option<SystemTime>, &mut D) + Send + Sync,
         D: Send,
     ;
 }
@@ -146,6 +147,7 @@ impl MidiHandler {
     pub fn new_with_driver(name: &str, driver: MidiHandlerDriver) -> Result<Self, Error> {
         match driver {
             MidiHandlerDriver::ALSA => Ok(MidiHandler::ALSA(MidiInputAlsa::new(name)?)),
+            _ => todo!(),
         }
     }
 
@@ -164,9 +166,9 @@ impl MidiHandler {
         r
     }
 
-    pub fn run(&mut self, conf: &DeviceConfig, eventmap: &EventMap, (rs,ts): (mpsc::Receiver<bool>, mpsc::Sender<bool>)) -> Result<(), Error>  {
+    pub fn run(&mut self, conf: &DeviceConfig, eventmap: &EventMap, trs: (mpsc::Sender<bool>, mpsc::Receiver<bool>)) -> Result<(), Error>  {
         handler_fcall!{
-            self, handle_inputport, (conf, eventmap,(rs,ts)),
+            self, handle_inputport, (conf, eventmap,trs),
             ALSA
         }
     }
@@ -178,9 +180,9 @@ impl MidiHandler {
         }
     }
 
-    pub fn device_events(&mut self, ts: mpsc::Sender<MidiPortHandler>) -> Result<(), Error> {
+    pub fn device_events(&mut self, ts: mpsc::Sender<Option<MidiPortHandler>>, (tss, rss): (mpsc::Sender<bool>,mpsc::Receiver<bool>)) -> Result<(), Error> {
         handler_fcall!{
-            self, device_events, ts,
+            self, device_events, (ts,tss,rss),
             ALSA
         }
     }
@@ -192,7 +194,7 @@ where T: MidiInput<A>
     input.ports_handle()
 }
 
-fn handle_inputport<T>(input: &mut T, (conf, eventmap, (rs, ts)): (&DeviceConfig, &EventMap, (mpsc::Receiver<bool>, mpsc::Sender<bool>))) -> Result<(), Error>
+fn handle_inputport<T>(input: &mut T, (conf, eventmap, (ts, rs)): (&DeviceConfig, &EventMap, (mpsc::Sender<bool>, mpsc::Receiver<bool>))) -> Result<(), Error>
 where T: MidiInputHandler + Send
 {
     thread::scope(|s| -> Result<(), Error> {
@@ -229,13 +231,13 @@ where T: MidiInputHandler + Send
             Ok(())
         });
 
-        input.handle_input(|t,m,(evq,pts)| {
+        input.handle_input(|_,m,t,(evq,pts)| {
             let mut event: EventBuf = Event::from(m).into();
             event.timestamp = t;
             let mut evq = evq.lock().unwrap();
             evq.add(event).unwrap();
             pts.send(false).expect("unexpected write error");
-        }, (rs,ts), (evq,pts.clone()))?;
+        }, (ts,rs), (evq,pts.clone()))?;
 
         pts.send(true).expect("unexpected write error");
         let _ = exec_thread.join();
@@ -252,9 +254,9 @@ where T: MidiInputHandler
     input.signal_stop_input()
 }
 
-fn device_events<T, A>(input: &mut T, ts: mpsc::Sender<MidiPortHandler>) -> Result<(), Error>
+fn device_events<T, A>(input: &mut T, (ts,tss,rss): (mpsc::Sender<Option<MidiPortHandler>>, mpsc::Sender<bool>, mpsc::Receiver<bool>)) -> Result<(), Error>
 where T: MidiInput<A>
 {
-    input.device_events(ts)
+    input.device_events(ts, (tss, rss))
 }
 

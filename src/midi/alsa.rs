@@ -198,8 +198,10 @@ impl MidiInputAlsa {
         Ok(())
     }
 
-    fn handle_input_internal<F, D>(&mut self, callback: F, userdata: D) -> Result<(), Error>
-    where F: Fn(Option<SystemTime>, &[u8], &mut D) + Send {
+    fn binary_input_handler<F, D>(&mut self, callback: F, userdata: D) -> Result<(), Error>
+    where
+        F: Fn(&Self, Option<SystemTime>, &[u8], &mut D) -> Result<(),Error> + Send
+    {
         let decoder = MidiEvent::new(0)?;
         decoder.enable_running_status(false);
 
@@ -212,7 +214,7 @@ impl MidiInputAlsa {
             _ => SystemTime::now(),
         };
 
-        self.alsa_input_handler(|_, mut ev, (message, buffer, continue_sysex, userdata)| {
+        self.alsa_input_handler(|s, mut ev, (message, buffer, continue_sysex, userdata)| {
             if !*continue_sysex { message.clear() }
 
             let do_decode = match ev.get_type() {
@@ -241,11 +243,56 @@ impl MidiInputAlsa {
             if message.is_empty() || *continue_sysex { return Ok(false); }
 
             let ts: Option<SystemTime> = ev.get_time().map(|v| ts+v);
-            (callback)(ts, message, userdata);
+            (callback)(s, ts, message, userdata)?;
             Ok(false)
         }
         , (message, buffer, continue_sysex, userdata))?;
         Ok(())
+    }
+
+    fn threaded_alsa_input<F, D>(&mut self, callback: F, (ts, rs): (mpsc::Sender<bool>, mpsc::Receiver<bool>), userdata: D) -> Result<(),Error>
+    where
+        F: Fn(&Self, alsa::seq::Event, &mut D) -> Result<bool, Error> + Send,
+        D: Send,
+    {
+        thread::scope( |sc| -> Result<(), Error> {
+            let stop_trigger = self.stop_trigger[1];
+            let t = sc.spawn(move || -> Result<(), Error> {
+                let userdata = userdata;
+                self.alsa_input_handler(callback, userdata)?;
+                ts.send(false).expect("unexpected send() error");
+                Ok(())
+            });
+            match rs.recv()? {
+                true => Self::signal_stop_input_internal(stop_trigger)?,
+                false => ()
+            };
+            t.join().expect("unexpected thread error")?;
+            Ok(())
+        })
+    }
+
+    fn threaded_handler<H, F, T, RF: ?Sized, D, R>(&mut self, handler: H, callback: F, (ts, rs): (mpsc::Sender<bool>, mpsc::Receiver<bool>), userdata: D) -> Result<(),Error>
+    where
+        H: Fn(&mut Self, F,D) -> Result<(), Error> + Send,
+        F: Fn(&Self, T, &RF, &mut D) -> Result<R,Error> + Send,
+        D: Send,
+    {
+        thread::scope( |sc| -> Result<(), Error> {
+            let stop_trigger = self.stop_trigger[1];
+            let t = sc.spawn(move || -> Result<(), Error> {
+                let userdata = userdata;
+                handler(self, callback, userdata)?;
+                ts.send(false).expect("unexpected send() error");
+                Ok(())
+            });
+            match rs.recv()? {
+                true => Self::signal_stop_input_internal(stop_trigger)?,
+                false => ()
+            };
+            t.join().expect("unexpected thread error")?;
+            Ok(())
+        })
     }
 }
 
@@ -301,6 +348,7 @@ impl MidiInput<Addr> for MidiInputAlsa {
                     PortFilter::Name(s) => p.name.contains(s),
                     PortFilter::Regex(s) => s.is_match(&p.name),
                     PortFilter::Addr(MidiAddrHandler::ALSA(s)) => p.addr == *s,
+                    _ => panic!("unexpected error"),
                 }
             }
         );
@@ -325,27 +373,26 @@ impl MidiInput<Addr> for MidiInputAlsa {
         Ok(())
     }
 
-    fn device_events(&mut self, ts: mpsc::Sender<MidiPortHandler>) -> Result<(), Error> {
+    fn device_events(&mut self, ts: mpsc::Sender<Option<MidiPortHandler>>, (tss, rss): (mpsc::Sender<bool>, mpsc::Receiver<bool>)) -> Result<(), Error> {
         let ports = self.ports()?;
         let port = self.filter_ports(ports, PortFilter::Name("System:Announce".to_string()));
         self.connect(&port[0].addr, "rmidimap-alsa-announce")?;
-        self.alsa_input_handler(|s, ev, _|{
+        self.threaded_alsa_input(move |s: &Self, ev: alsa::seq::Event, _| -> Result<bool, Error> {
             // handle disconnect event on watched port
             match ev.get_type() {
-                // EventType::PortStart | EventType::ClientStart | EventType::PortExit | EventType::ClientExit => {
                 EventType::PortStart => {
                     if let Some(a) = ev.get_data::<alsa::seq::Addr>() {
                         let p = s.ports()?;
                         let pp = s.filter_ports(p, PortFilter::Addr( MidiAddrHandler::ALSA(a) ));
                         if !pp.is_empty() {
-                            ts.send(MidiPortHandler::ALSA(pp[0].clone())).expect("unexpected send() error");
+                            ts.send(Some(MidiPortHandler::ALSA(pp[0].clone()))).expect("unexpected send() error");
                         }
                     };
                     Ok(false)
                 }
                 _ => Ok(false),
             }
-        }, ())?;
+        }, (tss, rss), ())?;
         self.close_internal();
         Ok(())
     }
@@ -357,26 +404,16 @@ impl MidiInputHandler for MidiInputAlsa
         Self::signal_stop_input_internal(self.stop_trigger[1])
     }
 
-    fn handle_input<F, D>(&mut self, callback: F, (rs, ts): (mpsc::Receiver<bool>, mpsc::Sender<bool>), userdata: D) -> Result<(), Error>
+    fn handle_input<F, D>(&mut self, callback: F, (ts, rs): (mpsc::Sender<bool>, mpsc::Receiver<bool>), userdata: D) -> Result<(), Error>
     where
-        F: Fn(Option<SystemTime>, &[u8], &mut D) + Send,
+        F: Fn(&Self, &[u8], Option<SystemTime>, &mut D) + Send + Sync,
         D: Send,
     {
-        thread::scope( |sc| -> Result<(), Error> {
-            let stop_trigger = self.stop_trigger[1];
-            let t = sc.spawn(move || -> Result<(), Error> {
-                let userdata = userdata;
-                self.handle_input_internal(callback, userdata)?;
-                ts.send(false).expect("unexpected send() error");
+        self.threaded_handler(Self::binary_input_handler,
+            |s, t, m, d| -> Result<(),Error> {
+                callback(s,m,t,d);
                 Ok(())
-            });
-            match rs.recv()? {
-                true => Self::signal_stop_input_internal(stop_trigger)?,
-                false => ()
-            };
-            t.join().expect("unexpected thread error")?;
-            Ok(())
-        })
+        }, (ts, rs), userdata)
     }
 }
 

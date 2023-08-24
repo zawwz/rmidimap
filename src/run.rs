@@ -2,8 +2,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::sync::{Mutex,Arc};
 
-use crate::Error;
+use libc::SIGUSR1;
+use signal_hook::iterator::Signals;
 
+use crate::Error;
 use crate::midi::{PortFilter,MidiHandler,MidiPortHandler};
 use crate::config::{Config,DeviceConfig};
 use crate::eventmap::EventMap;
@@ -31,21 +33,53 @@ pub fn run_config(conf: &Config) -> Result<(), Error> {
 
     let input = MidiHandler::new("rmidimap")?;
 
+    let (tdev,rdev) = mpsc::channel::<Option<MidiPortHandler>>();
+    let (tsd,rsd) = mpsc::channel::<bool>();
+
+    let ntsd = tsd.clone();
+    let ntdev = tdev.clone();
+    let mut signals = Signals::new(&[SIGUSR1])?;
+    let _signal_thread = thread::spawn(move || {
+        for sig in signals.forever() {
+            match sig {
+                10 => {
+                    println!("Recieved SIGUSR1, reloading config file");
+                    ntsd.send(true).unwrap();
+                    ntdev.send(None).unwrap();
+                    break;
+                }
+                _ => (),
+            }
+        }
+    });
+
     thread::scope(|s| -> Result<(), Error> {
-        let (tdev,rdev) = mpsc::channel::<MidiPortHandler>();
         let mut threads: Vec<(thread::ScopedJoinHandle<'_, ()>, mpsc::Sender<bool>)> = Vec::new();
         let ports = input.ports()?;
         for p in ports {
             if let Some(v) = try_connect_process(&input, s, &p, &cfevmap)? { threads.push(v) }
         }
-        let _event_thread = s.spawn(|| {
+
+        let event_thread = s.spawn(move || {
             let mut input = MidiHandler::new("rmidimap-event-watcher").unwrap();
-            input.device_events(tdev).unwrap();
+            let r = input.device_events(tdev.clone(), (tsd,rsd));
+            tdev.send(None).unwrap();
+            r
         });
+
         loop {
             let p = rdev.recv()?;
-            if let Some(v) = try_connect_process(&input, s, &p, &cfevmap)? { threads.push(v) }
+            if p.is_none() {
+                break;
+            }
+            if let Some(v) = try_connect_process(&input, s, &p.unwrap(), &cfevmap)? { threads.push(v) }
+        };
+        event_thread.join().unwrap()?;
+        for (thread,ss) in threads {
+            let _ = ss.send(true);
+            thread.join().unwrap();
         }
+        Ok(())
     })?;
     Ok(())
 }
@@ -74,7 +108,7 @@ fn try_connect_process<'a>(
             let mm = m.as_ref().map(Arc::clone);
             let t = s.spawn( move || {
                 dev.run_connect().unwrap();
-                c.run(dev, eventmap, (srs,nsts)).unwrap();
+                c.run(dev, eventmap, (nsts,srs)).unwrap();
                 if let Some(m) = mm {
                     let mut m = m.lock().unwrap();
                     m.0 -= 1;
