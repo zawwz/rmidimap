@@ -8,4 +8,5 @@ pub struct RunConfigSerializer {
     pub args: Option<Vec<String>>,
     pub cmd:  Option<String>,
     pub envconf: Option<EventEnvSerializer>,
+    pub detach: Option<bool>,
 }

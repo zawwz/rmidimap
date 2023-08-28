@@ -33,7 +33,9 @@ impl DeviceConfig {
         let mut r = Vec::new();
         if let Some(ev) = v {
             for e in ev {
-                r.push( e.run(Event::new().make_env(None, false)?.to_map(e.envconf.as_ref()))? ) ;
+                if let Some(v) = e.run(Event::new().make_env(None, false)?.to_map(e.envconf.as_ref()))? {
+                    r.push(v);
+                }
             }
         }
         Ok(r)

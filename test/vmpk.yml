@@ -23,6 +23,12 @@ devices:
         channel: 0
         run:
           - cmd: "echo [$channel] NoteOn $id $value $raw"
+      - type: NoteOff
+        id: 30-127
+        channel: 0
+        run:
+          - cmd: "for I in $(seq 1 3) ; do echo wait $I ; sleep 1; done"
+            detach: true
       - type: PitchBend
         remap: 0-100
         float: true
