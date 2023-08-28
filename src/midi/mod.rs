@@ -202,6 +202,7 @@ where T: MidiInputHandler + Send
         // parking signal for runner, true = stop
         let (pts,prs) = mpsc::channel::<bool>();
 
+        // event queue populated by the main thread and consumed by the exec thread
         let evq = Arc::new(Mutex::new(CircularBuffer::<EventBuf>::new(conf.queue_length)));
 
         // background execution loop
@@ -222,6 +223,7 @@ where T: MidiInputHandler + Send
                         }
                     };
                     eventmap.run_event(&ev.as_event()).unwrap_or_else(|e| eprintln!("ERROR: error on run: {}", e) );
+                    // wait until interval has been reached
                     let elapsed_time = start.elapsed();
                     if elapsed_time < conf.interval {
                         thread::sleep(conf.interval - elapsed_time);

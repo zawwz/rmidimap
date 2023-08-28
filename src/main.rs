@@ -24,13 +24,16 @@ fn main() {
     loop {
         match run_file(&c.map_file) {
             Ok(_) => (),
-            Err(err) => println!("Error: {}", err)
+            Err(err) => {
+                eprintln!("Error: {}", err);
+                std::process::exit(1);
+            }
         }
     }
 }
 
 fn run_file(filepath: &Path) -> Result<(), Error> {
-    println!("Load file {}", filepath.to_str().unwrap());
+    println!("Load file {}", filepath.to_str().unwrap_or("<unknown>"));
     let dat = std::fs::read( filepath )?;
     let conf = Config::try_from(&dat[..])?;
     run::run_config(&conf)

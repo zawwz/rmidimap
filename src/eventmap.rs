@@ -44,7 +44,8 @@ impl<'a> EventMap<'a> {
             for ev in v {
                 if ev.match_value(event) {
                     for r in &ev.run {
-                        r.run(event.make_env(ev.remap.as_ref(), ev.float )?.to_map(r.envconf.as_ref()))?;
+                        let env = event.make_env(ev.remap.as_ref(), ev.float )?.to_map(r.envconf.as_ref());
+                        r.run(env)?;
                     }
                 }
             }
