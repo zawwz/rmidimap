@@ -45,6 +45,15 @@ pub enum MidiPortHandler {
     ALSA(MidiPort<alsa::DeviceAddr>),
 }
 
+impl std::fmt::Display for MidiPortHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MidiPortHandler::ALSA(p) => write!(f, "{} {}:{}", p.name, p.addr.client, p.addr.port),
+            _ => todo!(),
+        }
+    }
+}
+
 pub enum MidiHandler {
     ALSA(MidiInputAlsa),
 }

@@ -55,17 +55,14 @@ impl TryFrom<DeviceConfigSerializer> for DeviceConfig {
     fn try_from(v: DeviceConfigSerializer) -> Result<Self, Self::Error> {
         Ok(DeviceConfig {
             identifier: {
-                if v.name.is_some() {
-                    Identifier::Name(v.name.unwrap())
-                }
-                else if v.regex.is_some() {
-                    Identifier::Regex(regex::Regex::new(&v.regex.unwrap())?)
-                }
-                else if v.addr.is_some() {
-                    Identifier::Addr(v.addr.unwrap())
-                }
-                else {
-                    Identifier::All
+                match (v.name, v.regex, v.addr) {
+                    (Some(_), Some(_), _      ) => return Err(Error::IncompatibleArgs("name","regex")),
+                    (Some(_), None   , Some(_)) => return Err(Error::IncompatibleArgs("name","addr")),
+                    (None   , Some(_), Some(_)) => return Err(Error::IncompatibleArgs("regex","addr")),
+                    (Some(n), None,    None   ) => Identifier::Name(n),
+                    (None,    Some(r), None   ) => Identifier::Regex(regex::Regex::new(&r)?),
+                    (None,    None   , Some(a)) => Identifier::Addr(a),
+                    (None,    None,    None   ) => Identifier::All,
                 }
             },
             max_connections: v.max_connections,

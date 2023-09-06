@@ -24,6 +24,15 @@ pub fn cross_shell(cmd: &str) -> Vec<String> {
     ).collect()
 }
 
+pub fn list_devices() -> Result<(), Error> {
+    let input = MidiHandler::new("rmidimap")?;
+    let ports = input.ports()?;
+    for p in ports {
+        println!("{}", p);
+    }
+    Ok(())
+}
+
 pub fn run_config(conf: &Config) -> Result<(), Error> {
     let cfevmap: Vec<DeviceRunItem> = conf.devices.iter().map(|x|
         (x, EventMap::from(x),

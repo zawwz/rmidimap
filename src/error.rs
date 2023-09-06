@@ -31,6 +31,10 @@ pub enum Error {
     RemapTooBig(f64),
     #[error("remap value is too low. Minimum value is {}", i64::MIN)]
     RemapTooLow(f64),
+    #[error("'{0}' and '{1}' are incompatible")]
+    IncompatibleArgs(&'static str, &'static str),
+    #[error("no map file was provided")]
+    NoArgument,
     #[error("pipe error")]
     Pipe,
     #[error("unknown error")]

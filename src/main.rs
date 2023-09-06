@@ -21,13 +21,29 @@ use cli::Cli;
 
 fn main() {
     let c = Cli::parse();
+    if c.list {
+        err_handle(run::list_devices());
+        return;
+    }
+    let map_file = err_handle(
+        c.map_file.ok_or(Error::NoArgument)
+    );
     loop {
-        match run_file(&c.map_file) {
-            Ok(_) => (),
-            Err(err) => {
-                eprintln!("Error: {}", err);
-                std::process::exit(1);
-            }
+        err_handle(
+            run_file(&map_file)
+        );
+    }
+}
+
+fn err_handle<T,E>(r: Result<T, E>) -> T
+where
+    E: std::fmt::Display
+{
+    match r {
+        Ok(v) => v,
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            std::process::exit(1);
         }
     }
 }
