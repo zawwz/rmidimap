@@ -25,7 +25,7 @@ fn main() {
     let c = Cli::parse();
     
     if c.list {
-        let mut handler = MidiHandler::new(constant::CLIENT_NAME).unwrap();
+        let mut handler = err_handle(MidiHandler::new(constant::CLIENT_NAME));
         err_handle(
             handler.builder_handler(run::ListDevicesBuilder, ())
         );
