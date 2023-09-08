@@ -1,5 +1,9 @@
+log_devices: true
 devices:
+  - name: 'System'
+    log_events: true
   - name: 'VMPK'
+    log_events: true
     max_connections: 1
     queue_length: 3
     interval: 100ms

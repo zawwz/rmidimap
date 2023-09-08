@@ -9,6 +9,7 @@ pub mod midi;
 pub mod util;
 pub mod cli;
 pub mod error;
+pub mod constant;
 
 type Error = error::Error;
 
@@ -18,11 +19,16 @@ use clap::Parser;
 
 use config::Config;
 use cli::Cli;
+use midi::MidiHandler;
 
 fn main() {
     let c = Cli::parse();
+    
     if c.list {
-        err_handle(run::list_devices());
+        let mut handler = MidiHandler::new(constant::CLIENT_NAME).unwrap();
+        err_handle(
+            handler.builder_handler(run::ListDevicesBuilder, ())
+        );
         return;
     }
     let map_file = err_handle(
@@ -52,5 +58,9 @@ fn run_file(filepath: &Path) -> Result<(), Error> {
     println!("Load file {}", filepath.to_str().unwrap_or("<unknown>"));
     let dat = std::fs::read( filepath )?;
     let conf = Config::try_from(&dat[..])?;
-    run::run_config(&conf)
+    let mut handler = match conf.driver {
+        Some(v) => MidiHandler::new_with_driver(constant::CLIENT_NAME, v),
+        None => MidiHandler::new(constant::CLIENT_NAME),
+    }?;
+    handler.builder_handler(run::RunConfigBuilder, &conf)
 }

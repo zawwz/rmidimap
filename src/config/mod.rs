@@ -9,13 +9,15 @@ use std::str::FromStr;
 
 use crate::util;
 
-pub type DeviceConfig = device::DeviceConfig;
-pub type EventConfig = event::EventConfig;
-pub type RunConfig = run::RunConfig;
+pub use device::DeviceConfig;
+pub use event::EventConfig;
+pub use run::RunConfig;
 pub type EventEnvMap = serializer::EventEnvSerializer;
 
 #[derive(Clone,Debug)]
 pub struct Config {
+    pub log: bool,
+    pub driver: Option<crate::midi::MidiDriver>,
     pub devices: Vec<DeviceConfig>,
 }
 
@@ -23,6 +25,8 @@ impl TryFrom<ConfigSerializer> for Config {
     type Error = crate::Error;
     fn try_from(v: ConfigSerializer) -> Result<Self, Self::Error> {
         Ok(Config {
+            log: v.log_devices.unwrap_or(false),
+            driver: v.driver,
             devices: util::map_tryfrom(v.devices)?,
         })
     }

@@ -41,3 +41,10 @@ where
         None => Ok(None),
     }
 }
+
+pub trait InternalTryFrom<T>
+where
+    Self: Sized,
+{
+    fn i_try_from(value: T) -> Result<Self, crate::Error>;
+}

@@ -5,10 +5,12 @@ use std::sync::{Mutex,Arc};
 use libc::SIGUSR1;
 use signal_hook::iterator::Signals;
 
-use crate::Error;
-use crate::midi::{PortFilter,MidiHandler,MidiPortHandler};
+use crate::util::InternalTryFrom;
+use crate::{Error, constant};
+use crate::midi::{PortFilter,MidiInputHandler, MidiPort, Builder};
 use crate::config::{Config,DeviceConfig};
 use crate::eventmap::EventMap;
+use crate::midi::builder::builder;
 
 type DeviceRunItem<'a> = (&'a DeviceConfig, EventMap<'a>, Option<Arc<Mutex<(u32, u32)>>>);
 type DeviceRunResult<'a> =(thread::ScopedJoinHandle<'a, Result<(), Error>>, mpsc::Sender<bool>);
@@ -24,25 +26,34 @@ pub fn cross_shell(cmd: &str) -> Vec<String> {
     ).collect()
 }
 
-pub fn list_devices() -> Result<(), Error> {
-    let input = MidiHandler::new("rmidimap")?;
-    let ports = input.ports()?;
+builder!(ListDevicesBuilder, list_devices, (), Result<(), Error>);
+builder!(RunConfigBuilder, run_config, &Config, Result<(), Error>);
+
+pub fn list_devices<T>(input: &T, _: ()) -> Result<(), Error>
+where
+    T: MidiInputHandler+Send+'static,
+    <T as MidiInputHandler>::DeviceAddr: 'static+std::fmt::Display,
+{
+    let ports = MidiInputHandler::ports(input)?;
+    println!(" Addr\t Name");
     for p in ports {
         println!("{}", p);
     }
     Ok(())
 }
 
-pub fn run_config(conf: &Config) -> Result<(), Error> {
+pub fn run_config<T>(input: &T, conf: &Config) -> Result<(), Error>
+where
+    T: MidiInputHandler+Send+'static,
+    <T as MidiInputHandler>::DeviceAddr: 'static+std::fmt::Display+InternalTryFrom<String>,
+{
     let cfevmap: Vec<DeviceRunItem> = conf.devices.iter().map(|x|
         (x, EventMap::from(x),
             x.max_connections.map(|v| (Arc::new(Mutex::new((0,v)))))
         )
     ).collect();
 
-    let input = MidiHandler::new("rmidimap")?;
-
-    let (tdev,rdev) = mpsc::channel::<Option<MidiPortHandler>>();
+    let (tdev,rdev) = mpsc::channel::<Option<MidiPort<T::DeviceAddr>>>();
     let (tsd,rsd) = mpsc::channel::<bool>();
 
     let ntsd = tsd.clone();
@@ -66,11 +77,11 @@ pub fn run_config(conf: &Config) -> Result<(), Error> {
         let mut threads: Vec<DeviceRunResult> = Vec::new();
         let ports = input.ports()?;
         for p in ports {
-            if let Some(v) = try_connect_process(&input, s, &p, &cfevmap)? { threads.push(v) }
+            if let Some(v) = try_connect_process(input, s, &p, &cfevmap)? { threads.push(v) }
         }
 
         let event_thread = s.spawn(move || {
-            let mut input = MidiHandler::new("rmidimap-event-watcher").unwrap();
+            let mut input = T::new(constant::CLIENT_NAME_EVENT).unwrap();
             let r = input.device_events(tdev.clone(), (tsd,rsd));
             tdev.send(None).unwrap();
             r
@@ -81,7 +92,11 @@ pub fn run_config(conf: &Config) -> Result<(), Error> {
             if p.is_none() {
                 break;
             }
-            if let Some(v) = try_connect_process(&input, s, &p.unwrap(), &cfevmap)? { threads.push(v) }
+            let p = p.unwrap();
+            if conf.log {
+                println!("{}: device connect: {}", constant::CLIENT_NAME, p);
+            }
+            if let Some(v) = try_connect_process(input, s, &p, &cfevmap)? { threads.push(v) }
         };
         event_thread.join().unwrap()?;
         for (thread,ss) in threads {
@@ -93,13 +108,17 @@ pub fn run_config(conf: &Config) -> Result<(), Error> {
     Ok(())
 }
 
-fn try_connect_process<'a>(
-    input: &MidiHandler,
+fn try_connect_process<'a, T>(
+    input: &T,
     s: &'a thread::Scope<'a, '_>,
-    p: &MidiPortHandler,
+    p: &MidiPort<T::DeviceAddr>,
     cfevmap: &'a[DeviceRunItem<'a>],
     )
-        -> Result<Option<DeviceRunResult<'a>>, Error> {
+        -> Result<Option<DeviceRunResult<'a>>, Error>
+where
+    T: MidiInputHandler+Send+'static,
+    <T as MidiInputHandler>::DeviceAddr: 'static+InternalTryFrom<String>,
+{
     for (dev, eventmap, counter) in cfevmap {
         // device counter is full
         if let Some(m) = counter {
@@ -109,7 +128,7 @@ fn try_connect_process<'a>(
             }
         }
 
-        if let Some(mut c) = input.try_connect(p.clone(), PortFilter::from(*dev))? {
+        if let Some(mut c) = input.try_connect(p.clone(), PortFilter::i_try_from(*dev)?)? {
             // increase device counter
             if let Some(m) = counter {
                 let mut m = m.lock().unwrap();

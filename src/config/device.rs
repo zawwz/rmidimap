@@ -23,6 +23,7 @@ pub struct DeviceConfig {
     pub events: Option<Vec<EventConfig>>,
     pub queue_length: usize,
     pub interval: Duration,
+    pub log: bool,
 }
 
 impl DeviceConfig {
@@ -71,6 +72,7 @@ impl TryFrom<DeviceConfigSerializer> for DeviceConfig {
             events:     util::map_opt_tryfrom(v.events)?,
             queue_length: v.queue_length.unwrap_or(256),
             interval: v.interval.map(|x| x.unwrap()).unwrap_or_else(|| Duration::new(0, 0)),
+            log: v.log_events.unwrap_or(false),
         })
     }
 }

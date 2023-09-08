@@ -33,4 +33,5 @@ pub struct DeviceConfigSerializer {
     pub max_connections: Option<u32>,
     pub queue_length: Option<usize>,
     pub interval: Option<DurationWrapper>,
+    pub log_events: Option<bool>,
 }

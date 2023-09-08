@@ -1,19 +1,75 @@
 extern crate libc;
 extern crate alsa;
 
+use std::str::FromStr;
 use std::{mem, thread};
 use std::ffi::{CString, CStr};
 use std::time::SystemTime;
 use std::sync::mpsc;
 
-use crate::midi::{MidiInput,MidiInputHandler,MidiPort,PortFilter,MidiPortHandler,MidiAddrHandler};
+use crate::midi::{MidiInput,MidiPort,PortFilter};
 use crate::error::Error;
+use crate::util::InternalTryFrom;
 
 use alsa::{Seq, Direction};
 use alsa::seq::{ClientIter, PortIter, MidiEvent, PortInfo, PortSubscribe, Addr, QueueTempo, EventType, PortCap, PortType};
 use thiserror::Error;
 
-pub type DeviceAddr = alsa::seq::Addr;
+#[derive(Debug,Clone,PartialEq,Eq)]
+pub struct DeviceAddr(Addr);
+
+const ANNOUNCE_ADDR: &str = "System:Announce";
+const CLIENT_NAME_ANNOUNCE: &str = "rmidimap-alsa-announce";
+
+impl std::fmt::Display for DeviceAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:>3}:{}", self.client(), self.port())
+    }
+}
+
+impl From<Addr> for DeviceAddr {
+    fn from(value: Addr) -> Self {
+        DeviceAddr(value)
+    }
+}
+
+impl FromStr for DeviceAddr {
+    type Err = AlsaError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // todo!()
+        // let mut osep = ;
+        if let Some(sep) = s.find(':') {
+            let (p1,p2) = (&s[..sep], &s[sep+1..] );
+            Ok(DeviceAddr(
+                Addr {
+                    client: p1.parse().map_err(|_| AlsaError::AddrParse(s.to_string()))?,
+                    port: p2.parse().map_err(|_| AlsaError::AddrParse(s.to_string()))?,
+                }
+            ))
+        }
+        else {
+            Err(AlsaError::AddrParse(s.to_string()))
+        }
+    }
+}
+
+impl InternalTryFrom<String> for DeviceAddr {
+    fn i_try_from(s: String) -> Result<Self, crate::Error> {
+        return Ok(Self::from_str(&s[..])?);
+    }
+}
+
+impl DeviceAddr {
+    pub fn unwrap(&self) -> Addr {
+        return self.0;
+    }
+    pub fn client(&self) -> i32 {
+        self.0.client
+    }
+    pub fn port(&self) -> i32 {
+        self.0.port
+    }
+}
 
 pub fn get_ports(s: &Seq, capability: PortCap) -> Vec<PortInfo> {
     ClientIter::new(s).flat_map(|c| PortIter::new(s, c.get_client()))
@@ -31,8 +87,10 @@ mod helpers {
 pub enum AlsaError {
     #[error(transparent)]
     ALSA(#[from] alsa::Error),
-    #[error("alsa decode error")]
+    #[error("internal alsa decode error")]
     Decode,
+    #[error("failed to parse '{0}' as an ALSA address")]
+    AddrParse(String),
 }
 
 pub struct MidiInputAlsa {
@@ -63,26 +121,22 @@ impl MidiInputAlsa {
 
 
     fn init_queue(&mut self) -> Result<i32, alsa::Error> {
-        let mut queue_id = 0;
         // Create the input queue
-        if !cfg!(feature = "avoid_timestamping") {
-            queue_id = self.seq.alloc_named_queue(unsafe { CStr::from_bytes_with_nul_unchecked(b"midir queue\0") })?;
-            // Set arbitrary tempo (mm=100) and resolution (240)
-            let qtempo = QueueTempo::empty()?;
-            qtempo.set_tempo(600_000);
-            qtempo.set_ppq(240);
-            self.seq.set_queue_tempo(queue_id, &qtempo)?;
-            let _ = self.seq.drain_output();
-        }
+        let queue_id = self.seq.alloc_named_queue(unsafe { CStr::from_bytes_with_nul_unchecked(b"midir queue\0") })?;
+        // Set arbitrary tempo (mm=100) and resolution (240)
+        let qtempo = QueueTempo::empty()?;
+        qtempo.set_tempo(600_000);
+        qtempo.set_ppq(240);
+        self.seq.set_queue_tempo(queue_id, &qtempo)?;
+        let _ = self.seq.drain_output();
+
 
         Ok(queue_id)
     }
 
     fn start_input_queue(&mut self, queue_id: i32) {
-        if !cfg!(feature = "avoid_timestamping") {
-            let _ = self.seq.control_queue(queue_id, EventType::Start, 0, None);
-            let _ = self.seq.drain_output();
-        }
+        let _ = self.seq.control_queue(queue_id, EventType::Start, 0, None);
+        let _ = self.seq.drain_output();
     }
 
     fn create_port(&mut self, port_name: &CStr, queue_id: i32) -> Result<i32, AlsaError> {
@@ -94,11 +148,9 @@ impl MidiInputAlsa {
         pinfo.set_type(PortType::MIDI_GENERIC | PortType::APPLICATION);
         pinfo.set_midi_channels(16);
 
-        if !cfg!(feature = "avoid_timestamping") {
-            pinfo.set_timestamping(true);
-            pinfo.set_timestamp_real(true);
-            pinfo.set_timestamp_queue(queue_id);
-        }
+        pinfo.set_timestamping(true);
+        pinfo.set_timestamp_real(true);
+        pinfo.set_timestamp_queue(queue_id);
 
         pinfo.set_name(port_name);
         match self.seq.create_port(&pinfo) {
@@ -114,11 +166,10 @@ impl MidiInputAlsa {
         }
 
         // Stop and free the input queue
-        if !cfg!(feature = "avoid_timestamping") {
-            let _ = self.seq.control_queue(self.queue_id, EventType::Stop, 0, None);
-            let _ = self.seq.drain_output();
-            let _ = self.seq.free_queue(self.queue_id);
-        }
+        let _ = self.seq.control_queue(self.queue_id, EventType::Stop, 0, None);
+        let _ = self.seq.drain_output();
+        let _ = self.seq.free_queue(self.queue_id);
+
 
         for fd in self.stop_trigger {
             if fd >= 0 {
@@ -190,7 +241,7 @@ impl MidiInputAlsa {
                 Ok(true) => break,
                 Ok(false) => (),
                 Err(e) => {
-                    eprintln!("ALSA CALLBACK ERROR: {:?}", e);
+                    eprintln!("ALSA CALLBACK ERROR: {}", e);
                     eprintln!("continuing execution");
                 },
             }
@@ -296,7 +347,8 @@ impl MidiInputAlsa {
     }
 }
 
-impl MidiInput<Addr> for MidiInputAlsa {
+impl MidiInput for MidiInputAlsa {
+    type DeviceAddr = DeviceAddr;
     fn new(client_name: &str) -> Result<Self, Error> {
         let seq = Seq::open(None, None, true)?;
 
@@ -318,45 +370,33 @@ impl MidiInput<Addr> for MidiInputAlsa {
         Ok(())
     }
 
-
-    fn ports_handle(&self) -> Result<Vec<MidiPortHandler>, Error> {
-        get_ports(&self.seq, PortCap::READ | PortCap::SUBS_READ).iter().map(
-        |x| -> Result<MidiPortHandler, Error> {
-            let cinfo = self.seq.get_any_client_info(x.get_client())?;
-            Ok(MidiPortHandler::ALSA( MidiPort{
-                name: cinfo.get_name()?.to_string()+":"+x.get_name()?,
-                addr: x.addr(),
-            }))
-        }).collect()
-    }
-
-    fn ports(&self) -> Result<Vec<MidiPort<Addr>>, Error> {
-        get_ports(&self.seq, PortCap::READ | PortCap::SUBS_READ).iter().map(|x| -> Result<MidiPort<Addr>, Error> {
+    fn ports(&self) -> Result<Vec<MidiPort<DeviceAddr>>, Error> {
+        get_ports(&self.seq, PortCap::READ | PortCap::SUBS_READ).iter().map(|x| -> Result<MidiPort<DeviceAddr>, Error> {
             let cinfo = self.seq.get_any_client_info(x.get_client())?;
             Ok(MidiPort {
                 name: cinfo.get_name()?.to_string()+":"+x.get_name()?,
-                addr: x.addr(),
+                addr: x.addr().into(),
             })
         }).collect()
     }
 
-    fn filter_ports(&self, mut ports: Vec<MidiPort<Addr>>, filter: PortFilter) -> Vec<MidiPort<Addr>> {
+    fn filter_ports(&self, mut ports: Vec<MidiPort<DeviceAddr>>, filter: PortFilter<Self::DeviceAddr>) -> Vec<MidiPort<DeviceAddr>> {
         ports.retain(
             |p| {
                 match &filter {
                     PortFilter::All => true,
                     PortFilter::Name(s) => p.name.contains(s),
                     PortFilter::Regex(s) => s.is_match(&p.name),
-                    PortFilter::Addr(MidiAddrHandler::ALSA(s)) => p.addr == *s,
-                    _ => panic!("unexpected error"),
+                    PortFilter::Addr(s) => p.addr == *s,
                 }
             }
         );
         ports
     }
 
-    fn connect(&mut self, port_addr: &Addr, port_name: &str) -> Result<(), Error> {
-        let src_pinfo = self.seq.get_any_port_info(*port_addr)?;
+    fn connect(&mut self, port_addr: &DeviceAddr, port_name: &str) -> Result<(), Error> {
+        let addr = port_addr.unwrap();
+        let src_pinfo = self.seq.get_any_port_info(addr)?;
         let queue_id = self.init_queue()?;
         let c_port_name = CString::new(port_name)?;
         let vport = self.create_port(&c_port_name, queue_id)?;
@@ -367,25 +407,25 @@ impl MidiInput<Addr> for MidiInputAlsa {
         self.seq.subscribe_port(&sub)?;
         self.subscription = Some(sub);
         self.init_trigger()?;
-        self.connect_addr = Some(*port_addr);
+        self.connect_addr = Some(addr);
         self.start_input_queue(queue_id);
         self.start_time = Some(std::time::SystemTime::now());
         Ok(())
     }
 
-    fn device_events(&mut self, ts: mpsc::Sender<Option<MidiPortHandler>>, (tss, rss): (mpsc::Sender<bool>, mpsc::Receiver<bool>)) -> Result<(), Error> {
+    fn device_events(&mut self, ts: mpsc::Sender<Option<MidiPort<Self::DeviceAddr>>>, (tss, rss): (mpsc::Sender<bool>, mpsc::Receiver<bool>)) -> Result<(), Error> {
         let ports = self.ports()?;
-        let port = self.filter_ports(ports, PortFilter::Name("System:Announce".to_string()));
-        self.connect(&port[0].addr, "rmidimap-alsa-announce")?;
+        let port = self.filter_ports(ports, PortFilter::Name(ANNOUNCE_ADDR.to_string()));
+        self.connect(&port[0].addr, CLIENT_NAME_ANNOUNCE)?;
         self.threaded_alsa_input(move |s: &Self, ev: alsa::seq::Event, _| -> Result<bool, Error> {
             // handle disconnect event on watched port
             match ev.get_type() {
                 EventType::PortStart => {
                     if let Some(a) = ev.get_data::<alsa::seq::Addr>() {
                         let p = s.ports()?;
-                        let pp = s.filter_ports(p, PortFilter::Addr( MidiAddrHandler::ALSA(a) ));
+                        let pp = s.filter_ports(p, PortFilter::Addr( a.into() ) );
                         if !pp.is_empty() {
-                            ts.send(Some(MidiPortHandler::ALSA(pp[0].clone()))).expect("unexpected send() error");
+                            ts.send(Some(pp[0].clone())).expect("unexpected send() error");
                         }
                     };
                     Ok(false)
@@ -396,10 +436,7 @@ impl MidiInput<Addr> for MidiInputAlsa {
         self.close_internal();
         Ok(())
     }
-}
 
-impl MidiInputHandler for MidiInputAlsa
-{
     fn signal_stop_input(&self) -> Result<(), Error> {
         Self::signal_stop_input_internal(self.stop_trigger[1])
     }
@@ -416,4 +453,3 @@ impl MidiInputHandler for MidiInputAlsa
         }, (ts, rs), userdata)
     }
 }
-

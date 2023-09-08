@@ -1,9 +1,10 @@
 use std::ffi::NulError;
+use std::num::ParseIntError;
 use std::process::ExitStatus;
 use std::sync::mpsc::RecvError;
 use std::time::SystemTimeError;
 
-use crate::midi::alsa::AlsaError;
+use crate::midi::backend::alsa::AlsaError;
 
 use thiserror::Error;
 
@@ -25,6 +26,8 @@ pub enum Error {
     Regex(#[from] regex::Error),
     #[error(transparent)]
     SystemTime(#[from] SystemTimeError),
+    #[error(transparent)]
+    ParseInt(#[from] ParseIntError),
     #[error("execution failure")]
     ExecStatus(ExitStatus),
     #[error("remap value is too large. Maximum value is {}", i64::MAX)]

@@ -7,7 +7,6 @@ use crate::Error;
 
 use serde::{Serialize,Deserialize};
 
-
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -116,6 +115,20 @@ struct EventEnvRef<'a> {
     pub value: &'a str,
 }
 
+
+impl<'a> std::fmt::Display for Event<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{ \"type\": \"{}\", \"channel\": {}, \"id\": {}, \"value\": {}, \"raw\": \"{}\" }}",
+            self.r#type, self.channel, self.id, self.value, bytes_to_strhex(self.raw, " "))
+    }
+}
+
+impl std::fmt::Display for EventBuf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.as_event().fmt(f)
+    }
+}
+
 impl EventBuf {
     pub fn as_event(&self) -> Event {
         Event {
@@ -155,10 +168,13 @@ impl From<u8> for EventType {
     }
 }
 
-fn bytes_to_strhex(bytes: &[u8]) -> String {
+fn bytes_to_strhex(bytes: &[u8], separator: &str) -> String {
     let mut s = String::new();
     for &byte in bytes {
-        write!(&mut s, "{:X} ", byte).expect("unexpected write error");
+        write!(&mut s, "{:02X}{}", byte, separator).expect("unexpected write error");
+    }
+    if s.ends_with(separator) {
+        return s.trim_end_matches(separator).to_string();
     }
     s
 }
@@ -185,7 +201,7 @@ impl<'a> Event<'a> {
             channel: self.channel.to_string(),
             id: self.id.to_string(),
             rawvalue: self.value.to_string(),
-            raw: bytes_to_strhex(self.raw),
+            raw: bytes_to_strhex(self.raw, " "),
             timestamp: self.timestamp.unwrap_or(SystemTime::now()).duration_since(SystemTime::UNIX_EPOCH)?.as_secs_f64().to_string(),
             value: match (remap,float) {
                 (Some(r),true)  => r.remap(self.value as f64).to_string(),
