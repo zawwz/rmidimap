@@ -2,7 +2,7 @@
 
 Map MIDI signals to command with a simple yaml file.
 
-See [format]() and [examples](/examples/).
+See [format](/FORMAT.md) and [examples](/examples/).
 
 # Usage
 
@@ -14,14 +14,18 @@ Simply execute `rmidimap <FILE>` to start with the desired map file.
 
 Only Linux+ALSA currently.
 
+### Device connection
+
+Connect to devices by name, regex or address, and run commands on connect or disconnect.
+
+### MIDI Event mapping
+
+Define commands to execute on certain MIDI events
+
 ### Performance
 
 rmidimap runs with very low processing overhead.
-Processing overhead has been measured at 100-200µs, while execution spawning was measured to 1-4ms.
-
-### Device connection
-
-Connect to devices by name or regex, and run commands on connect or disconnect.
+Processing overhead was measured at 100-200µs, while execution spawning was measured to 1-4ms.
 
 ### Command queue and interval
 
